@@ -8,6 +8,7 @@ A full-stack app that renders an interactive 3D solar-system style universe and 
 - Orbiting planets animation with camera controls
 - Backend proxy endpoint for secure API key usage
 - Planet list panel with live API data
+- Habitability prediction model with score, confidence, and label
 
 ## Quick Start
 
@@ -30,3 +31,4 @@ A full-stack app that renders an interactive 3D solar-system style universe and 
 ## API Route
 
 - `GET /api/planets` fetches all available planets from API Ninjas and returns JSON.
+- `POST /api/predictions` accepts `{ planets: [...] }` and returns habitability predictions.

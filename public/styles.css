@@ -278,12 +278,92 @@ body {
   color: #d9efff;
 }
 
+.planet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.prediction-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.prediction-chip--high {
+  color: #07372a;
+  background: #8ef8c7;
+  border-color: rgba(142, 248, 199, 0.6);
+}
+
+.prediction-chip--moderate {
+  color: #4b3602;
+  background: #ffe08a;
+  border-color: rgba(255, 224, 138, 0.6);
+}
+
+.prediction-chip--low {
+  color: #420b0b;
+  background: #ffb2b2;
+  border-color: rgba(255, 178, 178, 0.6);
+}
+
+.prediction-chip--unknown {
+  color: #c5dcf1;
+  background: rgba(64, 108, 141, 0.5);
+  border-color: rgba(155, 200, 236, 0.35);
+}
+
 .planet-meta {
   margin: 0;
   font-size: 0.9rem;
   color: #9cd0f3;
   display: grid;
   gap: 0.15rem;
+}
+
+.planet-reason {
+  color: #c9e9ff;
+  font-size: 0.8rem;
+  line-height: 1.25;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reason-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.reason-indicator--helpful {
+  color: #072f24;
+  background: rgba(144, 248, 201, 0.95);
+  border-color: rgba(144, 248, 201, 0.6);
+}
+
+.reason-indicator--risk {
+  color: #3b0909;
+  background: rgba(255, 178, 178, 0.95);
+  border-color: rgba(255, 178, 178, 0.65);
+}
+
+.reason-indicator--uncertain {
+  color: #4a3605;
+  background: rgba(255, 226, 150, 0.95);
+  border-color: rgba(255, 226, 150, 0.65);
 }
 
 @keyframes reveal {
