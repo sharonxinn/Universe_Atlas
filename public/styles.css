@@ -1,0 +1,318 @@
+:root {
+  --bg-1: #030712;
+  --bg-2: #0b132f;
+  --panel: rgba(6, 19, 43, 0.75);
+  --panel-border: rgba(121, 184, 255, 0.35);
+  --ink: #eaf5ff;
+  --muted: #9cc2df;
+  --accent: #66d9ff;
+  --gold: #ffc857;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background: radial-gradient(circle at 20% 20%, #153b70 0%, var(--bg-2) 32%, var(--bg-1) 75%);
+  font-family: 'Space Grotesk', sans-serif;
+  overflow-x: hidden;
+}
+
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, black 35%, transparent 95%);
+  pointer-events: none;
+}
+
+.topbar {
+  padding: 1.5rem clamp(1rem, 4vw, 2.5rem) 0.75rem;
+  position: relative;
+  z-index: 1;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.topbar p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 1rem;
+  padding: 0.75rem clamp(1rem, 4vw, 2.5rem) 1.5rem;
+  min-height: calc(100vh - 110px);
+  position: relative;
+  z-index: 1;
+}
+
+.scene-panel,
+.data-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 40px rgba(1, 6, 16, 0.45);
+}
+
+.scene-panel {
+  position: relative;
+  height: clamp(420px, 68vh, 760px);
+  overflow: hidden;
+}
+
+#universeCanvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hand-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.planet-hover-card {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  max-width: 300px;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(183, 233, 255, 0.4);
+  background: rgba(4, 17, 36, 0.86);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity 120ms ease;
+}
+
+.planet-hover-card.is-hidden {
+  opacity: 0;
+}
+
+.planet-hover-title {
+  margin: 0 0 0.45rem;
+  font-weight: 700;
+  color: #e7f7ff;
+}
+
+.planet-hover-meta {
+  margin: 0;
+  display: grid;
+  gap: 0.18rem;
+  font-size: 0.85rem;
+  color: #a9d7f4;
+}
+
+.cv-panel {
+  width: 100%;
+  max-width: 360px;
+  padding: 0.55rem;
+  margin: 0.35rem 0 0.55rem;
+  border-radius: 12px;
+  background: rgba(3, 14, 31, 0.78);
+  border: 1px solid rgba(127, 194, 255, 0.35);
+}
+
+#fingerToggleBtn {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: linear-gradient(180deg, #72f4c5 0%, #1ebd8f 100%);
+  color: #02251c;
+  border-radius: 9px;
+  padding: 0.48rem 0.6rem;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.finger-status {
+  margin: 0.5rem 0;
+  font-size: 0.75rem;
+  color: #b8dffc;
+}
+
+.camera-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  transform: scaleX(-1);
+}
+
+.finger-cursor {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  margin-top: -8px;
+  border-radius: 50%;
+  border: 2px solid #a8fcff;
+  background: rgba(96, 247, 255, 0.35);
+  box-shadow: 0 0 10px rgba(127, 255, 251, 0.8);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.finger-cursor.is-hidden {
+  display: none;
+}
+
+.legend {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: rgba(2, 12, 30, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+}
+
+.legend .dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 0.35rem;
+}
+
+.legend .sun {
+  background: var(--gold);
+  box-shadow: 0 0 8px #ffc857;
+}
+
+.legend .planet {
+  background: var(--accent);
+}
+
+.data-panel {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+#reloadBtn {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: linear-gradient(180deg, #2fb6ff 0%, #0087d8 100%);
+  color: #00152b;
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 160ms ease;
+}
+
+#reloadBtn:hover {
+  transform: translateY(-1px);
+}
+
+.status {
+  color: var(--muted);
+  margin: 0.75rem 0;
+}
+
+.planet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.planet-list li {
+  background: rgba(10, 28, 59, 0.75);
+  border: 1px solid rgba(102, 217, 255, 0.24);
+  border-radius: 12px;
+  padding: 0.7rem;
+  animation: reveal 420ms ease both;
+}
+
+.planet-name {
+  margin: 0 0 0.35rem;
+  font-weight: 700;
+  color: #d9efff;
+}
+
+.planet-meta {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #9cd0f3;
+  display: grid;
+  gap: 0.15rem;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .scene-panel {
+    height: 52vh;
+    min-height: 360px;
+  }
+
+  .cv-panel {
+    max-width: 100%;
+  }
+
+  .planet-hover-card {
+    max-width: min(280px, calc(100% - 1.5rem));
+  }
+}

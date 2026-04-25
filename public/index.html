@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Universe 3D Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+        "three/examples/jsm/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <header class="topbar">
+    <h1>Universe Atlas</h1>
+    <p>Interactive 3D planetary system powered by live API data.</p>
+  </header>
+
+  <main class="layout">
+    <section class="scene-panel">
+      <canvas id="universeCanvas"></canvas>
+      <canvas id="handOverlay" class="hand-overlay"></canvas>
+      <div id="planetHoverCard" class="planet-hover-card is-hidden"></div>
+      <div id="fingerCursor" class="finger-cursor is-hidden"></div>
+      <div class="legend">
+        <span><i class="dot sun"></i> Sun</span>
+        <span><i class="dot planet"></i> Planets</span>
+      </div>
+    </section>
+
+    <aside class="data-panel">
+      <div class="panel-header">
+        <h2>Planet Information</h2>
+        <button id="reloadBtn" type="button">Reload Data</button>
+      </div>
+      <div class="cv-panel">
+        <button id="fingerToggleBtn" type="button">Enable Finger Control</button>
+        <p id="fingerStatus" class="finger-status">Finger control is off.</p>
+        <video id="cameraPreview" class="camera-preview" autoplay muted playsinline></video>
+      </div>
+      <p id="status" class="status">Loading planets...</p>
+      <ul id="planetList" class="planet-list"></ul>
+    </aside>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
