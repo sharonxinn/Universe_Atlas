@@ -23,9 +23,13 @@
   <header class="topbar">
     <h1>Universe Atlas</h1>
     <p>Interactive 3D planetary system powered by live API data.</p>
+    <div class="top-tabs" role="tablist" aria-label="Main views">
+      <button id="tabUniverse" class="top-tab is-active" type="button" role="tab" aria-selected="true">Universe View</button>
+      <button id="tabChat" class="top-tab" type="button" role="tab" aria-selected="false">Galactic Chat</button>
+    </div>
   </header>
 
-  <main class="layout">
+  <main id="universeLayout" class="layout">
     <section class="scene-panel">
       <canvas id="universeCanvas"></canvas>
       <canvas id="handOverlay" class="hand-overlay"></canvas>
@@ -50,6 +54,64 @@
       <p id="status" class="status">Loading planets...</p>
       <ul id="planetList" class="planet-list"></ul>
     </aside>
+  </main>
+
+  <main id="chatLayout" class="chat-layout is-hidden" aria-hidden="true">
+    <section class="chat-panel">
+      <div class="chat-header">
+        <div>
+          <h2>Interplanetary Communication Hub</h2>
+          <p>Send text or voice messages between planets in real time.</p>
+        </div>
+        <button id="refreshChatBtn" type="button">Refresh Messages</button>
+      </div>
+
+      <div class="chat-main-split">
+        <div class="chat-window-pane">
+          <div class="chat-controls">
+            <label>
+              From Planet
+              <select id="chatSenderPlanet"></select>
+            </label>
+            <label>
+              To Planet
+              <select id="chatRecipientPlanet"></select>
+            </label>
+          </div>
+
+          <p id="chatRoomLabel" class="chat-room-label">Private Channel: Earth <-> Mars</p>
+          <p id="chatOnlineStatus" class="chat-online-status">Online: checking status...</p>
+          <p id="chatTypingIndicator" class="chat-typing-indicator">Typing: none</p>
+          <p id="chatStatus" class="chat-status">Connecting to galactic channel...</p>
+
+          <form id="chatForm" class="chat-form">
+            <textarea id="chatInput" rows="3" maxlength="500" placeholder="Type your transmission message..."></textarea>
+            <div class="chat-actions">
+              <button id="voiceInputBtn" type="button">Start Voice Input</button>
+              <button id="sendChatBtn" type="submit">Send Message</button>
+            </div>
+          </form>
+
+          <ul id="chatMessages" class="chat-messages chat-messages--hidden" aria-live="polite" aria-hidden="true"></ul>
+        </div>
+
+        <div class="chat-visual-pane">
+          <section class="chat-visual-panel" aria-label="3D message visualization">
+            <div id="chatHoloStage" class="holo-stage">
+              <div class="holo-core"></div>
+              <div class="holo-ring holo-ring--outer"></div>
+              <div class="holo-ring holo-ring--inner"></div>
+              <div id="chatHoloMessages" class="holo-messages"></div>
+            </div>
+          </section>
+          <article id="chatSatelliteMessage" class="satellite-message-display" aria-live="polite">
+            <p class="satellite-message-title">Planet Message</p>
+            <p class="satellite-message-route">Click a satellite to view latest message.</p>
+            <p class="satellite-message-text">No message selected yet.</p>
+          </article>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>

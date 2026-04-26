@@ -13,6 +13,23 @@ const cameraPreviewEl = document.getElementById('cameraPreview');
 const fingerCursorEl = document.getElementById('fingerCursor');
 const handOverlayEl = document.getElementById('handOverlay');
 const handOverlayCtx = handOverlayEl.getContext('2d');
+const universeLayoutEl = document.getElementById('universeLayout');
+const chatLayoutEl = document.getElementById('chatLayout');
+const tabUniverseBtn = document.getElementById('tabUniverse');
+const tabChatBtn = document.getElementById('tabChat');
+const refreshChatBtn = document.getElementById('refreshChatBtn');
+const chatSenderPlanetEl = document.getElementById('chatSenderPlanet');
+const chatRecipientPlanetEl = document.getElementById('chatRecipientPlanet');
+const chatStatusEl = document.getElementById('chatStatus');
+const chatRoomLabelEl = document.getElementById('chatRoomLabel');
+const chatOnlineStatusEl = document.getElementById('chatOnlineStatus');
+const chatTypingIndicatorEl = document.getElementById('chatTypingIndicator');
+const chatMessagesEl = document.getElementById('chatMessages');
+const chatHoloMessagesEl = document.getElementById('chatHoloMessages');
+const chatSatelliteMessageEl = document.getElementById('chatSatelliteMessage');
+const chatFormEl = document.getElementById('chatForm');
+const chatInputEl = document.getElementById('chatInput');
+const voiceInputBtn = document.getElementById('voiceInputBtn');
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x020611, 0.008);
@@ -142,12 +159,24 @@ let handTracker = null;
 let mediaStream = null;
 let handLoopRequestId = null;
 let previousPinchDistance = null;
+let smoothedPinchDistance = null;
 let smoothedFingerX = null;
 let smoothedFingerY = null;
 let previousSteerX = null;
 let previousSteerY = null;
 let handSendInFlight = false;
 let consecutiveTrackingErrors = 0;
+
+const HAND_CONTROL_TUNING = {
+  cursorSmoothingAlpha: 0.08,
+  steeringPanSpeed: 0.03,
+  steeringDeadzonePx: 8.5,
+  steeringResponseScale: 0.65,
+  steeringMaxDeltaPx: 22,
+  pinchSmoothingAlpha: 0.2,
+  pinchZoomThreshold: 0.0022,
+  pinchZoomScale: 120
+};
 
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -157,6 +186,24 @@ const HAND_CONNECTIONS = [
   [13, 17], [17, 18], [18, 19], [19, 20],
   [0, 17]
 ];
+
+const CHAT_PLANETS = ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
+const speechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+let activeTab = 'universe';
+let chatMessagesCache = [];
+let chatLatestId = 0;
+let chatGlobalMessagesCache = [];
+let chatGlobalLatestId = 0;
+let chatPollTimer = null;
+let chatPresenceTimer = null;
+let chatTypingStopTimer = null;
+let chatRecognition = null;
+let isRecordingVoice = false;
+let chatTypingSent = false;
+let shouldSendVoiceOnRecognitionEnd = false;
+let voiceTranscriptBuffer = '';
+let selectedSatellitePlanet = 'Earth';
 
 const SOLAR_SYSTEM_DEFAULTS = {
   Mercury: {
@@ -392,6 +439,522 @@ function createSpaceship(colorHex = 0x8cc7ff) {
 function formatNumber(value, digits = 2) {
   if (typeof value !== 'number' || Number.isNaN(value)) return 'Unknown';
   return value.toFixed(digits);
+}
+
+function getPrivateChannelKey(senderPlanet = chatSenderPlanetEl.value, recipientPlanet = chatRecipientPlanetEl.value) {
+  const planets = [String(senderPlanet || '').trim(), String(recipientPlanet || '').trim()]
+    .filter((value) => value.length > 0)
+    .sort((left, right) => left.localeCompare(right));
+  return planets.length === 2 ? `${planets[0]}|${planets[1]}` : '';
+}
+
+function getPrivateChannelLabel() {
+  const channel = getPrivateChannelKey();
+  if (!channel) return 'Private Channel: not selected';
+  return `Private Channel: ${channel.replace('|', ' <-> ')}`;
+}
+
+function resetChatChannelState() {
+  chatMessagesCache = [];
+  chatLatestId = 0;
+  renderChatMessages();
+}
+
+function updateChatRoomLabel() {
+  chatRoomLabelEl.textContent = getPrivateChannelLabel();
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function updateTabUI() {
+  const showUniverse = activeTab === 'universe';
+  universeLayoutEl.classList.toggle('is-hidden', !showUniverse);
+  chatLayoutEl.classList.toggle('is-hidden', showUniverse);
+  chatLayoutEl.setAttribute('aria-hidden', showUniverse ? 'true' : 'false');
+  tabUniverseBtn.classList.toggle('is-active', showUniverse);
+  tabChatBtn.classList.toggle('is-active', !showUniverse);
+  tabUniverseBtn.setAttribute('aria-selected', showUniverse ? 'true' : 'false');
+  tabChatBtn.setAttribute('aria-selected', showUniverse ? 'false' : 'true');
+  if (showUniverse) {
+    onResize();
+  }
+}
+
+function setActiveTab(nextTab) {
+  if (nextTab !== 'universe' && nextTab !== 'chat') return;
+  activeTab = nextTab;
+  updateTabUI();
+}
+
+function mergeMessages(existingMessages, incomingMessages, maxItems = 240) {
+  const byId = new Map(existingMessages.map((message) => [message.id, message]));
+  incomingMessages.forEach((message) => {
+    if (typeof message?.id === 'number') {
+      byId.set(message.id, message);
+    }
+  });
+
+  return [...byId.values()]
+    .sort((left, right) => left.id - right.id)
+    .slice(-maxItems);
+}
+
+function renderChatMessages() {
+  chatMessagesEl.innerHTML = '';
+  renderHoloMessages();
+}
+
+function renderHoloMessages() {
+  if (!chatHoloMessagesEl) return;
+
+  const coordinates = [
+    { x: -220, y: -84, z: 40 },
+    { x: -72, y: -122, z: 22 },
+    { x: 78, y: -124, z: 18 },
+    { x: 220, y: -84, z: 34 },
+    { x: 220, y: 78, z: 44 },
+    { x: 76, y: 122, z: 26 },
+    { x: -76, y: 122, z: 26 },
+    { x: -220, y: 78, z: 42 }
+  ];
+
+  const planetColors = {
+    Mercury: '#a9b4ca',
+    Venus: '#f0bf78',
+    Earth: '#6ec7ff',
+    Mars: '#e88d67',
+    Jupiter: '#e3c08f',
+    Saturn: '#f4d9a6',
+    Uranus: '#8ee8d8',
+    Neptune: '#6f94ff'
+  };
+
+  chatHoloMessagesEl.innerHTML = `
+    <div class="holo-planet-system">
+      ${CHAT_PLANETS.map((planetName, index) => {
+        const position = coordinates[index] || { x: 0, y: 0, z: 0 };
+        const isActive = selectedSatellitePlanet === planetName;
+        const speed = 7.8 + index * 0.7;
+        return `
+          <article class="holo-planet-node" data-planet="${planetName}" style="--planet-x:${position.x}px; --planet-y:${position.y}px; --planet-z:${position.z}px; --planet-color:${planetColors[planetName] || '#7cc7ff'}; --satellite-speed:${speed}s;">
+            <div class="holo-planet-globe"></div>
+            <div class="holo-satellite-orbit" data-planet="${planetName}">
+              <button class="holo-satellite ${isActive ? 'is-active' : ''}" type="button" data-planet="${planetName}" title="Show latest ${planetName} satellite message"></button>
+            </div>
+            <p class="holo-planet-name">${planetName}</p>
+          </article>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  renderSatelliteMessageDetail();
+}
+
+function latestMessageForPlanet(planetName) {
+  const sourceMessages = chatGlobalMessagesCache.length ? chatGlobalMessagesCache : chatMessagesCache;
+  for (let i = sourceMessages.length - 1; i >= 0; i -= 1) {
+    const message = sourceMessages[i];
+    if (message.senderPlanet === planetName || message.recipientPlanet === planetName) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function renderSatelliteMessageDetail() {
+  if (!chatSatelliteMessageEl) return;
+
+  const message = latestMessageForPlanet(selectedSatellitePlanet);
+  if (!message) {
+    chatSatelliteMessageEl.innerHTML = `
+      <p class="satellite-message-title">${escapeHtml(selectedSatellitePlanet)} Satellite</p>
+      <p class="satellite-message-route">No transmission yet for this planet.</p>
+      <p class="satellite-message-text">When a message is sent from or to ${escapeHtml(selectedSatellitePlanet)}, it will appear here.</p>
+    `;
+    return;
+  }
+
+  const route = `${escapeHtml(message.senderPlanet)} -> ${escapeHtml(message.recipientPlanet)}`;
+  const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const mode = message.mode === 'voice' ? 'Voice message' : 'Text message';
+  const audioHint = message.mode === 'voice'
+    ? 'Audio: click this planet satellite to play sound.'
+    : 'Audio: synthesized speech available on click.';
+  chatSatelliteMessageEl.innerHTML = `
+    <p class="satellite-message-title">${escapeHtml(selectedSatellitePlanet)} Satellite</p>
+    <p class="satellite-message-route">${route} | ${mode} | ${time}</p>
+    <p class="satellite-message-route">${audioHint}</p>
+    <p class="satellite-message-text">${escapeHtml(message.text)}</p>
+  `;
+}
+
+function playSelectedSatelliteMessage() {
+  const message = latestMessageForPlanet(selectedSatellitePlanet);
+  if (!message) {
+    chatStatusEl.textContent = `No message available for ${selectedSatellitePlanet} satellite.`;
+    return;
+  }
+
+  speakTransmission(`${message.senderPlanet} to ${message.recipientPlanet}. ${message.text}`);
+  chatStatusEl.textContent = `Playing ${selectedSatellitePlanet} satellite message audio.`;
+}
+
+async function refreshChatMessages(sinceId = chatLatestId) {
+  try {
+    const channel = getPrivateChannelKey();
+    const params = new URLSearchParams({ limit: '80', sinceId: String(sinceId) });
+    if (channel) params.set('channel', channel);
+
+    const response = await fetch(`/api/chat/messages?${params.toString()}`);
+    if (!response.ok) throw new Error('Unable to load chat messages.');
+    const payload = await response.json();
+    const incoming = payload.messages || [];
+    if (incoming.length) {
+      chatMessagesCache = mergeMessages(chatMessagesCache, incoming, 120);
+      chatLatestId = payload.latestId || chatLatestId;
+      renderChatMessages();
+      chatStatusEl.textContent = `Connected. ${chatMessagesCache.length} transmissions loaded.`;
+    } else if (!chatMessagesCache.length) {
+      renderChatMessages();
+      chatStatusEl.textContent = 'Connected. Waiting for transmissions...';
+    }
+  } catch (error) {
+    chatStatusEl.textContent = `Chat sync error: ${error.message}`;
+  }
+}
+
+async function refreshGlobalSatelliteMessages(sinceId = chatGlobalLatestId) {
+  try {
+    const params = new URLSearchParams({ limit: '220', sinceId: String(sinceId) });
+    const response = await fetch(`/api/chat/messages?${params.toString()}`);
+    if (!response.ok) return;
+    const payload = await response.json();
+    const incoming = payload.messages || [];
+    if (incoming.length) {
+      chatGlobalMessagesCache = mergeMessages(chatGlobalMessagesCache, incoming, 320);
+      chatGlobalLatestId = payload.latestId || chatGlobalLatestId;
+      renderHoloMessages();
+    } else if (!chatGlobalMessagesCache.length) {
+      renderHoloMessages();
+    }
+  } catch {
+    // Satellite map keeps previous known state on temporary sync failures.
+  }
+}
+
+async function pingPresence() {
+  const planet = chatSenderPlanetEl.value;
+  if (!planet) return;
+
+  try {
+    await fetch('/api/chat/presence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planet })
+    });
+  } catch {
+    // Ignore heartbeat errors and keep UI responsive.
+  }
+}
+
+async function setTypingState(isTyping) {
+  const channel = getPrivateChannelKey();
+  const planet = chatSenderPlanetEl.value;
+  if (!channel || !planet) return;
+
+  if (chatTypingSent === isTyping) return;
+  chatTypingSent = isTyping;
+
+  try {
+    await fetch('/api/chat/typing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planet, channel, isTyping })
+    });
+  } catch {
+    // Ignore typing errors to prevent blocking message flow.
+  }
+}
+
+async function refreshChatStatus() {
+  const localFallbackPlanets = [...new Set([chatSenderPlanetEl.value, chatRecipientPlanetEl.value].filter((value) => value))];
+
+  const applyLocalFallback = () => {
+    chatOnlineStatusEl.textContent = localFallbackPlanets.length
+      ? `Online: ${localFallbackPlanets.join(', ')} (local)`
+      : 'Online: local status only';
+    chatTypingIndicatorEl.textContent = 'Typing: none';
+    chatTypingIndicatorEl.classList.remove('is-active');
+  };
+
+  try {
+    const channel = getPrivateChannelKey();
+    const params = new URLSearchParams();
+    if (channel) params.set('channel', channel);
+    const query = params.toString();
+    const response = await fetch(`/api/chat/status${query ? `?${query}` : ''}`);
+    if (!response.ok) {
+      applyLocalFallback();
+      return;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+      applyLocalFallback();
+      return;
+    }
+
+    const payload = await response.json();
+
+    const onlinePlanets = payload.onlinePlanets || [];
+    const typingPlanets = (payload.typingPlanets || []).filter((planet) => planet !== chatSenderPlanetEl.value);
+
+    chatOnlineStatusEl.textContent = onlinePlanets.length
+      ? `Online: ${onlinePlanets.join(', ')}`
+      : 'Online: no active planets';
+
+    if (typingPlanets.length) {
+      const suffix = typingPlanets.length > 1 ? 'are' : 'is';
+      chatTypingIndicatorEl.textContent = `Typing: ${typingPlanets.join(', ')} ${suffix} typing...`;
+      chatTypingIndicatorEl.classList.add('is-active');
+    } else {
+
+      chatTypingIndicatorEl.textContent = 'Typing: none';
+      chatTypingIndicatorEl.classList.remove('is-active');
+    }
+  } catch {
+    applyLocalFallback();
+  }
+}
+
+function speakTransmission(text) {
+  if (!('speechSynthesis' in window)) {
+    chatStatusEl.textContent = 'Voice playback is not supported in this browser.';
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.95;
+  utterance.pitch = 1.03;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+
+function setRecordingState(isRecording) {
+  isRecordingVoice = isRecording;
+  voiceInputBtn.classList.toggle('is-recording', isRecording);
+  voiceInputBtn.textContent = isRecording ? 'Stop Voice Input' : 'Start Voice Input';
+}
+
+function ensureChatRecognition() {
+  if (!speechRecognitionCtor) return null;
+  if (chatRecognition) return chatRecognition;
+
+  chatRecognition = new speechRecognitionCtor();
+  chatRecognition.lang = 'en-US';
+  chatRecognition.interimResults = true;
+  chatRecognition.continuous = false;
+
+  chatRecognition.onresult = (event) => {
+    const segments = [];
+    for (let i = 0; i < event.results.length; i += 1) {
+      const result = event.results[i];
+      const text = result[0]?.transcript || '';
+      if (result.isFinal) {
+        voiceTranscriptBuffer = `${voiceTranscriptBuffer} ${text}`.trim();
+      } else {
+        segments.push(text);
+      }
+    }
+
+    const preview = `${voiceTranscriptBuffer} ${segments.join(' ')}`.trim();
+    chatInputEl.value = preview;
+  };
+
+  chatRecognition.onerror = (event) => {
+    shouldSendVoiceOnRecognitionEnd = false;
+    voiceTranscriptBuffer = '';
+    setRecordingState(false);
+    chatStatusEl.textContent = `Voice input error: ${event.error}`;
+  };
+
+  chatRecognition.onend = async () => {
+    setRecordingState(false);
+    if (!shouldSendVoiceOnRecognitionEnd) return;
+    shouldSendVoiceOnRecognitionEnd = false;
+
+    const transcript = (voiceTranscriptBuffer || chatInputEl.value || '').trim();
+    voiceTranscriptBuffer = '';
+
+    if (transcript) {
+      chatInputEl.value = transcript;
+      chatStatusEl.textContent = 'Voice captured. Sending transmission...';
+      await sendChatMessage('voice');
+    } else {
+      chatStatusEl.textContent = 'No clear speech captured. Please try again.';
+    }
+  };
+
+  return chatRecognition;
+}
+
+async function sendChatMessage(mode) {
+  const senderPlanet = chatSenderPlanetEl.value;
+  const recipientPlanet = chatRecipientPlanetEl.value;
+  const text = chatInputEl.value.trim();
+
+  if (!text) {
+    chatStatusEl.textContent = 'Please enter a message before sending.';
+    return;
+  }
+
+  if (senderPlanet === recipientPlanet) {
+    chatStatusEl.textContent = 'Choose different sender and receiver planets.';
+    return;
+  }
+
+  try {
+    await setTypingState(false);
+    const response = await fetch('/api/chat/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderPlanet, recipientPlanet, text, mode })
+    });
+
+    if (!response.ok) throw new Error('Message delivery failed.');
+
+    const payload = await response.json();
+    const message = payload.message;
+    chatMessagesCache = mergeMessages(chatMessagesCache, [message], 120);
+    chatGlobalMessagesCache = mergeMessages(chatGlobalMessagesCache, [message], 320);
+    chatLatestId = Math.max(chatLatestId, message.id || 0);
+    chatGlobalLatestId = Math.max(chatGlobalLatestId, message.id || 0);
+    renderChatMessages();
+    chatInputEl.value = '';
+    chatStatusEl.textContent = `Sent from ${senderPlanet} to ${recipientPlanet}.`;
+    if (mode === 'voice') {
+      speakTransmission(message.text);
+    }
+  } catch (error) {
+    chatStatusEl.textContent = `Send failed: ${error.message}`;
+  }
+}
+
+function initChatUI() {
+  CHAT_PLANETS.forEach((planetName) => {
+    const senderOpt = document.createElement('option');
+    senderOpt.value = planetName;
+    senderOpt.textContent = planetName;
+    chatSenderPlanetEl.appendChild(senderOpt);
+
+    const recipientOpt = document.createElement('option');
+    recipientOpt.value = planetName;
+    recipientOpt.textContent = planetName;
+    chatRecipientPlanetEl.appendChild(recipientOpt);
+  });
+
+  chatSenderPlanetEl.value = 'Earth';
+  chatRecipientPlanetEl.value = 'Mars';
+  updateChatRoomLabel();
+
+  chatFormEl.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await sendChatMessage('text');
+  });
+
+  refreshChatBtn.addEventListener('click', async () => {
+    await pingPresence();
+    await refreshChatMessages(0);
+    await refreshGlobalSatelliteMessages(0);
+    await refreshChatStatus();
+  });
+
+  const onChannelChanged = async () => {
+    await setTypingState(false);
+    updateChatRoomLabel();
+    resetChatChannelState();
+    await pingPresence();
+    await refreshChatMessages(0);
+    await refreshGlobalSatelliteMessages(chatGlobalLatestId);
+    await refreshChatStatus();
+  };
+
+  chatSenderPlanetEl.addEventListener('change', onChannelChanged);
+  chatRecipientPlanetEl.addEventListener('change', onChannelChanged);
+
+  chatInputEl.addEventListener('input', async () => {
+    await setTypingState(chatInputEl.value.trim().length > 0);
+    if (chatTypingStopTimer) {
+      window.clearTimeout(chatTypingStopTimer);
+    }
+    chatTypingStopTimer = window.setTimeout(() => {
+      setTypingState(false);
+    }, 1300);
+  });
+
+  voiceInputBtn.addEventListener('click', async () => {
+    const recognition = ensureChatRecognition();
+    if (!recognition) {
+      chatStatusEl.textContent = 'Voice input is not supported in this browser.';
+      return;
+    }
+
+    if (isRecordingVoice) {
+      shouldSendVoiceOnRecognitionEnd = true;
+      recognition.stop();
+      setRecordingState(false);
+      return;
+    }
+
+    voiceTranscriptBuffer = '';
+    chatInputEl.value = '';
+    shouldSendVoiceOnRecognitionEnd = true;
+    setRecordingState(true);
+    chatStatusEl.textContent = 'Listening... your voice will be converted to text and sent.';
+    recognition.start();
+  });
+
+  chatMessagesEl.addEventListener('click', (event) => {
+    const button = event.target.closest('.chat-speak-btn');
+    if (!button) return;
+    const messageId = Number.parseInt(button.dataset.messageId, 10);
+    const message = chatMessagesCache.find((item) => item.id === messageId);
+    if (!message) return;
+    speakTransmission(`${message.senderPlanet} to ${message.recipientPlanet}. ${message.text}`);
+  });
+
+  chatHoloMessagesEl.addEventListener('click', (event) => {
+    const target = event.target.closest('.holo-satellite, .holo-satellite-orbit, .holo-planet-node');
+    if (!target) return;
+    const planet = target.dataset.planet;
+    if (!planet) return;
+    selectedSatellitePlanet = planet;
+    renderHoloMessages();
+    renderSatelliteMessageDetail();
+    playSelectedSatelliteMessage();
+  });
+
+  chatPollTimer = window.setInterval(() => {
+    refreshChatMessages(chatLatestId);
+    refreshGlobalSatelliteMessages(chatGlobalLatestId);
+    refreshChatStatus();
+  }, 3500);
+
+  chatPresenceTimer = window.setInterval(() => {
+    pingPresence();
+  }, 9000);
+
+  pingPresence();
+  refreshChatMessages(0);
+  refreshGlobalSatelliteMessages(0);
+  refreshChatStatus();
 }
 
 function numberOrNull(value) {
@@ -847,7 +1410,7 @@ function isFingerExtended(landmarks, tipIndex, pipIndex) {
 
 function steerCamera(deltaX, deltaY) {
   setSelectedBody(null);
-  const panSpeed = 0.05; 
+  const panSpeed = HAND_CONTROL_TUNING.steeringPanSpeed;
   const right = new THREE.Vector3();
   const up = new THREE.Vector3();
   camera.matrix.extractBasis(right, up, new THREE.Vector3());
@@ -874,7 +1437,7 @@ function onHandResults(results) {
   const landmarks = results.multiHandLandmarks?.[0];
 
   if (!landmarks) {
-    pinchLatched = false; previousPinchDistance = null; smoothedFingerX = null; smoothedFingerY = null;
+    pinchLatched = false; previousPinchDistance = null; smoothedPinchDistance = null; smoothedFingerX = null; smoothedFingerY = null;
     previousSteerX = null; previousSteerY = null;
     fingerStatusEl.textContent = 'No hand detected.';
     fingerCursorEl.classList.add('is-hidden');
@@ -893,7 +1456,7 @@ function onHandResults(results) {
 
   if (smoothedFingerX === null) { smoothedFingerX = rawClientX; smoothedFingerY = rawClientY; } 
   else {
-    const alpha = 0.15;
+    const alpha = HAND_CONTROL_TUNING.cursorSmoothingAlpha;
     smoothedFingerX += (rawClientX - smoothedFingerX) * alpha;
     smoothedFingerY += (rawClientY - smoothedFingerY) * alpha;
   }
@@ -912,12 +1475,14 @@ function onHandResults(results) {
     const rawSteerY = panelRect.top + ((indexTip.y + middleTip.y) * 0.5) * panelRect.height;
 
     if (previousSteerX !== null && previousSteerY !== null) {
-      const deltaX = rawSteerX - previousSteerX;
-      const deltaY = rawSteerY - previousSteerY;
-      const deadzone = 6.0; 
+      const rawDeltaX = rawSteerX - previousSteerX;
+      const rawDeltaY = rawSteerY - previousSteerY;
+      const deltaX = THREE.MathUtils.clamp(rawDeltaX, -HAND_CONTROL_TUNING.steeringMaxDeltaPx, HAND_CONTROL_TUNING.steeringMaxDeltaPx);
+      const deltaY = THREE.MathUtils.clamp(rawDeltaY, -HAND_CONTROL_TUNING.steeringMaxDeltaPx, HAND_CONTROL_TUNING.steeringMaxDeltaPx);
+      const deadzone = HAND_CONTROL_TUNING.steeringDeadzonePx;
 
       if (Math.abs(deltaX) > deadzone || Math.abs(deltaY) > deadzone) {
-        steerCamera(deltaX, deltaY);
+        steerCamera(deltaX * HAND_CONTROL_TUNING.steeringResponseScale, deltaY * HAND_CONTROL_TUNING.steeringResponseScale);
         previousSteerX = rawSteerX;
         previousSteerY = rawSteerY;
       }
@@ -938,15 +1503,22 @@ function onHandResults(results) {
   
   intersectPlanet(smoothedFingerX, smoothedFingerY);
 
-  const pinchDistance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y, indexTip.z - thumbTip.z);
-  const isPinching = pinchDistance < 0.04; 
+  const rawPinchDistance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y, indexTip.z - thumbTip.z);
+  if (smoothedPinchDistance === null) {
+    smoothedPinchDistance = rawPinchDistance;
+  } else {
+    smoothedPinchDistance += (rawPinchDistance - smoothedPinchDistance) * HAND_CONTROL_TUNING.pinchSmoothingAlpha;
+  }
+
+  const pinchDistance = smoothedPinchDistance;
+  const isPinching = pinchDistance < 0.04;
 
   let gestureMessage = isPinching ? 'Picking...' : '1 Finger: Pick. 2 Fingers: Move Display. Spread/Close: Zoom';
 
   if (previousPinchDistance !== null && !steeringGestureActive) {
     const pinchDelta = pinchDistance - previousPinchDistance;
-    if (Math.abs(pinchDelta) > 0.0015) {
-      zoomCamera(-pinchDelta * 200); 
+    if (Math.abs(pinchDelta) > HAND_CONTROL_TUNING.pinchZoomThreshold) {
+      zoomCamera(-pinchDelta * HAND_CONTROL_TUNING.pinchZoomScale);
       gestureMessage = pinchDelta > 0 ? 'Zooming Bigger...' : 'Zooming Smaller...';
     }
   }
@@ -998,7 +1570,7 @@ async function enableFingerControl() {
 }
 
 function disableFingerControl(msg = 'Finger control is off.') {
-  fingerEnabled = false; pinchLatched = false; previousPinchDistance = null; smoothedFingerX = null; smoothedFingerY = null;
+  fingerEnabled = false; pinchLatched = false; previousPinchDistance = null; smoothedPinchDistance = null; smoothedFingerX = null; smoothedFingerY = null;
   previousSteerX = null; previousSteerY = null; handSendInFlight = false; consecutiveTrackingErrors = 0;
   fingerCursorEl.classList.add('is-hidden'); clearHandOverlay(); setHoveredBody(null);
   if (handLoopRequestId) cancelAnimationFrame(handLoopRequestId); handLoopRequestId = null;
@@ -1043,3 +1615,6 @@ window.addEventListener('keydown', (e) => { if (e.key === 'Escape') setSelectedB
 
 hideHoverCard(); onResize(); animate();
 reloadBtn.addEventListener('click', loadPlanets); loadPlanets();
+tabUniverseBtn.addEventListener('click', () => setActiveTab('universe'));
+tabChatBtn.addEventListener('click', () => setActiveTab('chat'));
+initChatUI();

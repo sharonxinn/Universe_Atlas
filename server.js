@@ -8,6 +8,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_NINJAS_KEY;
 
+const chatMessages = [];
+let nextChatMessageId = 1;
+const chatPresenceByPlanet = new Map();
+const chatTypingByChannelPlanet = new Map();
+const ONLINE_WINDOW_MS = 30000;
+const TYPING_WINDOW_MS = 5000;
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '1mb' }));
 
@@ -39,6 +46,32 @@ function pushReason(bucket, condition, message) {
 function formatValue(value, digits = 2, unit = '') {
   if (value === null || !Number.isFinite(value)) return 'unknown';
   return `${value.toFixed(digits)}${unit}`;
+}
+
+function sanitizePlanetName(value) {
+  return String(value || '').trim();
+}
+
+function getChannelKey(planetA, planetB) {
+  const a = sanitizePlanetName(planetA);
+  const b = sanitizePlanetName(planetB);
+  if (!a || !b) return '';
+  return [a, b].sort((left, right) => left.localeCompare(right)).join('|');
+}
+
+function cleanupPresenceAndTyping() {
+  const now = Date.now();
+  for (const [planet, timestamp] of chatPresenceByPlanet.entries()) {
+    if (now - timestamp > ONLINE_WINDOW_MS) {
+      chatPresenceByPlanet.delete(planet);
+    }
+  }
+
+  for (const [key, timestamp] of chatTypingByChannelPlanet.entries()) {
+    if (now - timestamp > TYPING_WINDOW_MS) {
+      chatTypingByChannelPlanet.delete(key);
+    }
+  }
 }
 
 function scorePlanetHabitability(planet) {
@@ -267,6 +300,108 @@ app.post('/api/predictions', (req, res) => {
     },
     predictions
   });
+});
+
+app.get('/api/chat/messages', (req, res) => {
+  cleanupPresenceAndTyping();
+  const limitRaw = Number.parseInt(req.query.limit, 10);
+  const sinceIdRaw = Number.parseInt(req.query.sinceId, 10);
+  const channel = String(req.query.channel || '').trim();
+  const limit = Number.isFinite(limitRaw) ? clamp(limitRaw, 1, 200) : 80;
+  const sinceId = Number.isFinite(sinceIdRaw) ? Math.max(0, sinceIdRaw) : 0;
+
+  const filtered = chatMessages
+    .filter((message) => !channel || message.channel === channel)
+    .filter((message) => message.id > sinceId)
+    .slice(-limit);
+
+  return res.json({
+    messages: filtered,
+    latestId: chatMessages.length ? chatMessages[chatMessages.length - 1].id : 0
+  });
+});
+
+app.post('/api/chat/messages', (req, res) => {
+  const senderPlanet = sanitizePlanetName(req.body?.senderPlanet);
+  const recipientPlanet = sanitizePlanetName(req.body?.recipientPlanet);
+  const text = String(req.body?.text || '').trim();
+  const mode = req.body?.mode === 'voice' ? 'voice' : 'text';
+  const channel = getChannelKey(senderPlanet, recipientPlanet);
+
+  if (!senderPlanet || !recipientPlanet || !text || !channel) {
+    return res.status(400).json({
+      error: 'Expected { senderPlanet, recipientPlanet, text, mode } with non-empty values.'
+    });
+  }
+
+  const message = {
+    id: nextChatMessageId,
+    senderPlanet,
+    recipientPlanet,
+    channel,
+    text,
+    mode,
+    timestamp: Date.now()
+  };
+
+  nextChatMessageId += 1;
+  chatMessages.push(message);
+
+  // Keep only recent history in memory.
+  if (chatMessages.length > 500) {
+    chatMessages.splice(0, chatMessages.length - 500);
+  }
+
+  return res.status(201).json({ message });
+});
+
+app.post('/api/chat/presence', (req, res) => {
+  cleanupPresenceAndTyping();
+  const planet = sanitizePlanetName(req.body?.planet);
+  if (!planet) {
+    return res.status(400).json({ error: 'Expected { planet } with non-empty value.' });
+  }
+
+  chatPresenceByPlanet.set(planet, Date.now());
+  return res.status(204).end();
+});
+
+app.post('/api/chat/typing', (req, res) => {
+  cleanupPresenceAndTyping();
+  const planet = sanitizePlanetName(req.body?.planet);
+  const channel = String(req.body?.channel || '').trim();
+  const isTyping = Boolean(req.body?.isTyping);
+  if (!planet || !channel) {
+    return res.status(400).json({ error: 'Expected { planet, channel, isTyping }.' });
+  }
+
+  const key = `${channel}:${planet}`;
+  if (isTyping) {
+    chatTypingByChannelPlanet.set(key, Date.now());
+  } else {
+    chatTypingByChannelPlanet.delete(key);
+  }
+
+  return res.status(204).end();
+});
+
+app.get('/api/chat/status', (req, res) => {
+  cleanupPresenceAndTyping();
+  const channel = String(req.query.channel || '').trim();
+
+  const onlinePlanets = [...chatPresenceByPlanet.keys()].sort((a, b) => a.localeCompare(b));
+  const typingPlanets = [];
+  if (channel) {
+    const prefix = `${channel}:`;
+    for (const key of chatTypingByChannelPlanet.keys()) {
+      if (key.startsWith(prefix)) {
+        typingPlanets.push(key.slice(prefix.length));
+      }
+    }
+  }
+
+  typingPlanets.sort((a, b) => a.localeCompare(b));
+  return res.json({ onlinePlanets, typingPlanets });
 });
 
 app.get('*', (_, res) => {
